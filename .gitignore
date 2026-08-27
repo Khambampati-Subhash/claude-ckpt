@@ -1,0 +1,7 @@
+# Build output
+/ckpt
+*.exe
+
+# Go
+*.test
+*.out
