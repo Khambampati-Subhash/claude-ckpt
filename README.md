@@ -324,7 +324,8 @@ gofmt -l .               # should print nothing
 Tests use **synthetic fixtures only**. Real transcripts contain private
 conversation content and absolute paths, and neither belongs in a repository.
 
-CI runs formatting, vet, race-enabled tests and a build on Linux and macOS —
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. CI runs formatting,
+vet, race-enabled tests and a build on Linux and macOS —
 path handling and file permissions are central here, and they are exactly what
 differs between platforms.
 
