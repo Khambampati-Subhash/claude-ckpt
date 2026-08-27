@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/khambampati-subhash/claude-ckpt/internal/forest"
+	"github.com/khambampati-subhash/claude-ckpt/internal/htmlview"
 	"github.com/khambampati-subhash/claude-ckpt/internal/lineage"
 	"github.com/khambampati-subhash/claude-ckpt/internal/store"
 	"github.com/khambampati-subhash/claude-ckpt/internal/transcript"
@@ -26,6 +27,7 @@ Usage:
   ckpt list                       List sessions for the current directory
   ckpt list <session>             Show the checkpoint graph for a session
   ckpt graph                      Show how sessions fork from one another
+  ckpt graph --html [path]        Write that graph as a standalone HTML page
   ckpt fork <session>@<checkpoint> [-n N]
                                   Fork a session at a checkpoint
 
@@ -149,9 +151,22 @@ func listCheckpoints(dir, id string) error {
 // cmdGraph renders every session in the project as a fork tree, the way
 // `git log --graph --all` renders branches.
 func cmdGraph(args []string) error {
-	if len(args) > 0 {
-		return fmt.Errorf("graph takes no arguments")
+	out := ""
+	asHTML := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--html":
+			asHTML = true
+			// An optional path may follow, but not another flag.
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				out = args[i+1]
+				i++
+			}
+		default:
+			return fmt.Errorf("unknown flag %q (graph accepts --html [path])", args[i])
+		}
 	}
+
 	dir, err := projectDir()
 	if err != nil {
 		return err
@@ -162,6 +177,33 @@ func cmdGraph(args []string) error {
 	}
 	if len(f.Nodes) == 0 {
 		return fmt.Errorf("no sessions in %s", dir)
+	}
+
+	if asHTML {
+		if out == "" {
+			out = "ckpt-graph.html"
+		}
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		// 0600: the page embeds conversation excerpts, same sensitivity as the
+		// transcripts it is built from.
+		file, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		if err := htmlview.Render(f, cwd, file); err != nil {
+			return err
+		}
+		abs, err := filepath.Abs(out)
+		if err != nil {
+			abs = out
+		}
+		fmt.Printf("wrote %s\n", abs)
+		fmt.Printf("open with:  open %s\n", abs)
+		return nil
 	}
 
 	forks := 0

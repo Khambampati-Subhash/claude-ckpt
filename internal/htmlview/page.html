@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ckpt — session forks</title>
+<style>
+  :root {
+    --bg: #fbfaf8; --panel: #ffffff; --ink: #1c1b19; --muted: #6b6862;
+    --line: #e2ded7; --accent: #b4521f; --accent-soft: #f6ece6;
+    --user: #2f6f4f; --assistant: #3d5a80;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161513; --panel: #1f1e1b; --ink: #eae7e1; --muted: #9a958c;
+      --line: #322f2a; --accent: #e08b5c; --accent-soft: #2a211b;
+      --user: #7fbf9a; --assistant: #8fb0d9;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--line);
+    display: flex; flex-wrap: wrap; gap: 4px 18px; align-items: baseline;
+  }
+  header h1 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+  header .path { font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  header .stats { margin-left: auto; font-size: 12.5px; color: var(--muted); }
+
+  main { display: grid; grid-template-columns: minmax(320px, 42%) 1fr; min-height: calc(100vh - 62px); }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+
+  .tree { padding: 20px; border-right: 1px solid var(--line); overflow-x: auto; }
+  .detail { padding: 20px 24px; overflow-x: auto; }
+
+  ul.branch { list-style: none; margin: 0; padding: 0 0 0 22px; position: relative; }
+  ul.branch.root { padding-left: 0; }
+  ul.branch li { position: relative; padding: 4px 0; }
+  ul.branch:not(.root) > li::before {
+    content: ""; position: absolute; left: -14px; top: 22px;
+    width: 12px; border-top: 1px solid var(--line);
+  }
+  ul.branch:not(.root) > li::after {
+    content: ""; position: absolute; left: -14px; top: 0;
+    height: 100%; border-left: 1px solid var(--line);
+  }
+  ul.branch:not(.root) > li:last-child::after { height: 22px; }
+
+  .node {
+    display: block; width: 100%; text-align: left; cursor: pointer;
+    background: var(--panel); color: inherit;
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    font: inherit; transition: border-color .12s, background .12s;
+  }
+  .node:hover { border-color: var(--accent); }
+  .node[aria-selected="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .node .id { font-family: var(--mono); font-size: 12.5px; color: var(--accent); font-weight: 600; }
+  .node .title { display: block; margin-top: 2px; font-size: 13.5px; }
+  .node .meta { display: block; margin-top: 5px; font-size: 11.5px; color: var(--muted); }
+  .badge {
+    display: inline-block; font-family: var(--mono); font-size: 11px;
+    padding: 1px 6px; border-radius: 999px; border: 1px solid var(--line); margin-left: 6px;
+  }
+
+  .detail h2 { margin: 0 0 2px; font-size: 16px; }
+  .detail .sub { color: var(--muted); font-size: 12.5px; font-family: var(--mono); margin-bottom: 4px; }
+  .resume {
+    display: flex; gap: 8px; align-items: center; margin: 14px 0 20px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+  }
+  .resume code { font-family: var(--mono); font-size: 12.5px; overflow-x: auto; white-space: nowrap; flex: 1; }
+  .resume button {
+    font: inherit; font-size: 12px; cursor: pointer; padding: 4px 10px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit;
+  }
+  .resume button:hover { border-color: var(--accent); color: var(--accent); }
+
+  .msg { border-bottom: 1px solid var(--line); }
+  .msg > summary {
+    cursor: pointer; padding: 9px 4px; display: flex; gap: 10px; align-items: baseline;
+    list-style: none;
+  }
+  .msg > summary::-webkit-details-marker { display: none; }
+  .msg > summary:hover { background: var(--accent-soft); }
+  .msg .uuid { font-family: var(--mono); font-size: 12px; color: var(--accent); flex: none; }
+  .msg .role { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; flex: none; width: 66px; }
+  .msg .role.user { color: var(--user); }
+  .msg .role.assistant { color: var(--assistant); }
+  .msg .line { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+  .msg pre {
+    margin: 0 0 12px; padding: 12px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px;
+    font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word;
+    max-height: 420px; overflow: auto;
+  }
+  .fork-cmd { margin: 0 0 12px; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>ckpt</h1>
+  <span class="path" id="project"></span>
+  <span class="stats" id="stats"></span>
+</header>
+<main>
+  <div class="tree" id="tree"></div>
+  <div class="detail" id="detail"><p class="empty">Select a session on the left.</p></div>
+</main>
+
+<script id="ckpt-data" type="application/json">/*DATA*/null</script>
+<script>
+(function () {
+  var data = JSON.parse(document.getElementById("ckpt-data").textContent);
+  var index = {};
+
+  document.getElementById("project").textContent = data.project;
+  document.getElementById("stats").textContent =
+    data.sessions + " session" + (data.sessions === 1 ? "" : "s") +
+    " · " + data.forks + " fork" + (data.forks === 1 ? "" : "s") +
+    " · generated " + data.generated;
+
+  function buildList(nodes, isRoot) {
+    var ul = document.createElement("ul");
+    ul.className = "branch" + (isRoot ? " root" : "");
+    nodes.forEach(function (s) {
+      index[s.id] = s;
+      var li = document.createElement("li");
+      var btn = document.createElement("button");
+      btn.className = "node";
+      btn.type = "button";
+      btn.setAttribute("aria-selected", "false");
+      btn.dataset.id = s.id;
+
+      var meta = s.messages + " messages";
+      if (s.parent) {
+        meta += " · forked from " + s.parent + " at " + s.forkPoint;
+        if (s.own > 0) meta += " · +" + s.own + " new";
+        if (s.inferred) meta += " · inferred";
+      }
+
+      var id = document.createElement("span");
+      id.className = "id";
+      id.textContent = s.short;
+      if (s.parent) {
+        var b = document.createElement("span");
+        b.className = "badge";
+        b.textContent = "⑂ " + s.forkPoint;
+        id.appendChild(b);
+      }
+      var title = document.createElement("span");
+      title.className = "title";
+      title.textContent = s.title;
+      var m = document.createElement("span");
+      m.className = "meta";
+      m.textContent = meta;
+
+      btn.appendChild(id);
+      btn.appendChild(title);
+      btn.appendChild(m);
+      btn.addEventListener("click", function () { select(s.id); });
+      li.appendChild(btn);
+
+      if (s.children && s.children.length) li.appendChild(buildList(s.children, false));
+      ul.appendChild(li);
+    });
+    return ul;
+  }
+
+  document.getElementById("tree").appendChild(buildList(data.roots, true));
+
+  function select(id) {
+    var s = index[id];
+    if (!s) return;
+    document.querySelectorAll(".node").forEach(function (n) {
+      n.setAttribute("aria-selected", String(n.dataset.id === id));
+    });
+
+    var d = document.getElementById("detail");
+    d.textContent = "";
+
+    var h = document.createElement("h2");
+    h.textContent = s.title;
+    var sub = document.createElement("div");
+    sub.className = "sub";
+    sub.textContent = s.id + " · " + s.messages + " messages" +
+      (s.parent ? " · forked from " + s.parent + " at " + s.forkPoint : "");
+    d.appendChild(h);
+    d.appendChild(sub);
+
+    if (s.forkFrom) {
+      var ff = document.createElement("div");
+      ff.className = "sub";
+      ff.textContent = "↳ from: " + s.forkFrom;
+      d.appendChild(ff);
+    }
+
+    var bar = document.createElement("div");
+    bar.className = "resume";
+    var code = document.createElement("code");
+    code.textContent = "claude --resume " + s.id;
+    var copy = document.createElement("button");
+    copy.type = "button";
+    copy.textContent = "Copy";
+    copy.addEventListener("click", function () {
+      navigator.clipboard.writeText(code.textContent).then(function () {
+        copy.textContent = "Copied";
+        setTimeout(function () { copy.textContent = "Copy"; }, 1200);
+      }, function () { copy.textContent = "Press ⌘C"; });
+    });
+    bar.appendChild(code);
+    bar.appendChild(copy);
+    d.appendChild(bar);
+
+    var timeline = s.timeline || [];
+    if (!timeline.length) {
+      var e = document.createElement("p");
+      e.className = "empty";
+      e.textContent = "No displayable messages.";
+      d.appendChild(e);
+      return;
+    }
+
+    timeline.forEach(function (m) {
+      var det = document.createElement("details");
+      det.className = "msg";
+      var sum = document.createElement("summary");
+
+      var u = document.createElement("span");
+      u.className = "uuid";
+      u.textContent = m.short + (m.branches ? " ⑂" : "");
+      var r = document.createElement("span");
+      r.className = "role " + (m.role === "user" || m.role === "assistant" ? m.role : "");
+      r.textContent = m.role;
+      var l = document.createElement("span");
+      l.className = "line";
+      l.textContent = m.summary;
+
+      sum.appendChild(u);
+      sum.appendChild(r);
+      sum.appendChild(l);
+      det.appendChild(sum);
+
+      var cmd = document.createElement("p");
+      cmd.className = "fork-cmd";
+      cmd.textContent = "ckpt fork " + s.short + "@" + m.short;
+      det.appendChild(cmd);
+
+      var pre = document.createElement("pre");
+      pre.textContent = m.text || "(no text content)";
+      det.appendChild(pre);
+
+      d.appendChild(det);
+    });
+  }
+
+  if (data.roots.length) select(data.roots[0].id);
+})();
+</script>
+</body>
+</html>

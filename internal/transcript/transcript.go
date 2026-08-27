@@ -113,6 +113,43 @@ func (r Record) Summary() string {
 	return ""
 }
 
+// Text returns the record's readable content with line structure intact,
+// unlike Summary which collapses to one line. Tool calls and results are
+// labelled rather than dumped, so the output stays readable.
+func (r Record) Text() string {
+	msg, ok := r.fields["message"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	switch content := msg["content"].(type) {
+	case string:
+		return content
+	case []any:
+		var parts []string
+		for _, raw := range content {
+			block, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			switch block["type"] {
+			case "text":
+				if s, _ := block["text"].(string); strings.TrimSpace(s) != "" {
+					parts = append(parts, s)
+				}
+			case "thinking":
+				parts = append(parts, "(thinking)")
+			case "tool_use":
+				name, _ := block["name"].(string)
+				parts = append(parts, "→ tool: "+name)
+			case "tool_result":
+				parts = append(parts, "← tool result")
+			}
+		}
+		return strings.Join(parts, "\n\n")
+	}
+	return ""
+}
+
 func collapse(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	return strings.TrimSpace(s)

@@ -77,6 +77,7 @@ No dependencies beyond the Go standard library. Single static binary.
 ckpt list                          List sessions for the current directory
 ckpt list <session>                Show the checkpoint graph for a session
 ckpt graph                         Show how sessions fork from one another
+ckpt graph --html [path]           Write that graph as a standalone HTML page
 ckpt fork <session>@<checkpoint>   Fork a session at a checkpoint
 ckpt fork <session>@<checkpoint> -n 3
                                    Create three independent forks
@@ -96,6 +97,22 @@ and where each one branched off:
 
 6 session(s), 4 fork(s)
 ```
+
+For a browsable version:
+
+```sh
+ckpt graph --html && open ckpt-graph.html
+```
+
+The fork tree on the left, the selected session's messages on the right. Click a
+message to read it in full; each one shows the `ckpt fork` command that would
+branch from it, and each session shows its `claude --resume` line ready to copy.
+
+The page is a **single self-contained file** — no CDN, no fonts, no server, and
+it follows your system light/dark setting. It is written `0600` and embeds
+excerpts of your conversations, so treat it like the transcripts it comes from:
+don't commit it or paste it somewhere public. `ckpt-graph.html` is gitignored
+for that reason.
 
 Session and checkpoint IDs abbreviate to any unique prefix, like git SHAs.
 
