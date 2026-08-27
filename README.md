@@ -51,14 +51,22 @@ resumes at the tip. `ckpt` exposes the graph that is already there.
 ## Install
 
 ```sh
-go install github.com/khambampati-subhash/claude-ckpt@latest
+go install github.com/khambampati-subhash/claude-ckpt/cmd/ckpt@latest
 ```
 
-Or build from source:
+Or from a clone:
 
 ```sh
 git clone https://github.com/khambampati-subhash/claude-ckpt
-cd claude-ckpt && go build -o ckpt .
+cd claude-ckpt && go install ./cmd/ckpt
+```
+
+Either way the binary is named `ckpt` and lands in `$(go env GOPATH)/bin`. Make
+sure that directory is on your `PATH`:
+
+```sh
+export PATH="$PATH:$(go env GOPATH)/bin"
+ckpt help
 ```
 
 No dependencies beyond the Go standard library. Single static binary.
