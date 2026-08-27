@@ -76,9 +76,25 @@ No dependencies beyond the Go standard library. Single static binary.
 ```
 ckpt list                          List sessions for the current directory
 ckpt list <session>                Show the checkpoint graph for a session
+ckpt graph                         Show how sessions fork from one another
 ckpt fork <session>@<checkpoint>   Fork a session at a checkpoint
 ckpt fork <session>@<checkpoint> -n 3
                                    Create three independent forks
+```
+
+`ckpt graph` is the `git log --graph --all` view — every session in the project
+and where each one branched off:
+
+```
+● 8bfb66f4  Refactor the auth module                     386 msgs
+├── ● 570238e7  … [fork @bf2e4f2e]                        51 msgs   ⑂ bf2e4f2e  +0 new
+│       ↳ from: Should we use middleware or a decorator?
+├── ● 9ae99e52  … [fork @41241541]                        30 msgs   ⑂ 41241541  +12 new
+│       ↳ from: Actually, can we cache the token instead?
+└── ● d2af8cda  … [fork @79574ea1]                        48 msgs   ⑂ 79574ea1  +3 new
+        ↳ from: Let's try the middleware approach
+
+6 session(s), 4 fork(s)
 ```
 
 Session and checkpoint IDs abbreviate to any unique prefix, like git SHAs.

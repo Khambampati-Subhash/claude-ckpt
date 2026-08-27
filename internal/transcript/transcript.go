@@ -214,6 +214,36 @@ func (t *Transcript) Title() string {
 // above one means the conversation already branches at that point.
 func (t *Transcript) ChildCount(uuid string) int { return len(t.children[uuid]) }
 
+// Get returns the record with the given uuid.
+func (t *Transcript) Get(uuid string) (Record, bool) {
+	i, ok := t.byUUID[uuid]
+	if !ok {
+		return Record{}, false
+	}
+	return t.Records[i], true
+}
+
+// MessageUUIDs is the set of message identities in this transcript. Because a
+// fork preserves the uuids it inherits, two transcripts that overlap here share
+// history — which is what makes fork relationships detectable across sessions.
+func (t *Transcript) MessageUUIDs() map[string]struct{} {
+	out := make(map[string]struct{}, len(t.byUUID))
+	for id := range t.byUUID {
+		out[id] = struct{}{}
+	}
+	return out
+}
+
+// Tip returns the uuid of the last message on the main line, or "" if the
+// transcript has no messages.
+func (t *Transcript) Tip() string {
+	line := t.MainLine()
+	if len(line) == 0 {
+		return ""
+	}
+	return line[len(line)-1].UUID()
+}
+
 // Resolve expands a uuid prefix to the full uuid, the way git accepts short
 // SHAs. It fails on an ambiguous prefix rather than guessing.
 func (t *Transcript) Resolve(prefix string) (string, error) {

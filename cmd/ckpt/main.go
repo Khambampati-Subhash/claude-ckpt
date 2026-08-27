@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/khambampati-subhash/claude-ckpt/internal/forest"
+	"github.com/khambampati-subhash/claude-ckpt/internal/lineage"
 	"github.com/khambampati-subhash/claude-ckpt/internal/store"
 	"github.com/khambampati-subhash/claude-ckpt/internal/transcript"
 )
@@ -23,6 +25,7 @@ const usage = `ckpt — branch a Claude Code conversation
 Usage:
   ckpt list                       List sessions for the current directory
   ckpt list <session>             Show the checkpoint graph for a session
+  ckpt graph                      Show how sessions fork from one another
   ckpt fork <session>@<checkpoint> [-n N]
                                   Fork a session at a checkpoint
 
@@ -31,6 +34,7 @@ Session and checkpoint IDs may be abbreviated to any unique prefix.
 Examples:
   ckpt list
   ckpt list 8bfb66f4
+  ckpt graph
   ckpt fork 8bfb66f4@6e3f42cb -n 3
 `
 
@@ -49,6 +53,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "list", "ls":
 		return cmdList(args[1:])
+	case "graph":
+		return cmdGraph(args[1:])
 	case "fork":
 		return cmdFork(args[1:])
 	case "help", "-h", "--help":
@@ -140,6 +146,89 @@ func listCheckpoints(dir, id string) error {
 	return nil
 }
 
+// cmdGraph renders every session in the project as a fork tree, the way
+// `git log --graph --all` renders branches.
+func cmdGraph(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("graph takes no arguments")
+	}
+	dir, err := projectDir()
+	if err != nil {
+		return err
+	}
+	f, err := forest.Build(dir)
+	if err != nil {
+		return err
+	}
+	if len(f.Nodes) == 0 {
+		return fmt.Errorf("no sessions in %s", dir)
+	}
+
+	forks := 0
+	for _, n := range f.Nodes {
+		if n.Parent != nil {
+			forks++
+		}
+	}
+
+	for i, root := range f.Roots {
+		if i > 0 {
+			fmt.Println()
+		}
+		printNode(root, "", true, true)
+	}
+
+	fmt.Printf("\n%d session(s), %d fork(s)\n", len(f.Nodes), forks)
+	if forks == 0 {
+		fmt.Println("No forks yet — try:  ckpt fork <session>@<checkpoint>")
+	}
+	return nil
+}
+
+// printNode draws one session and recurses into its forks, using the same box
+// characters as a directory tree.
+func printNode(n *forest.Node, prefix string, isLast, isRoot bool) {
+	connector := ""
+	if !isRoot {
+		if isLast {
+			connector = "└── "
+		} else {
+			connector = "├── "
+		}
+	}
+
+	line := fmt.Sprintf("%s%s● %s  %-42s %4d msgs",
+		prefix, connector, short(n.Session.ID), truncate(n.Title, 42), n.Messages)
+	if n.Parent != nil {
+		line += fmt.Sprintf("   ⑂ %s  +%d new", short(n.ForkPoint), n.Own)
+		if n.Inferred {
+			line += "  (inferred)"
+		}
+	}
+	fmt.Println(line)
+
+	// Show what the fork point actually was, so the split is readable.
+	childPrefix := prefix
+	if !isRoot {
+		if isLast {
+			childPrefix += "    "
+		} else {
+			childPrefix += "│   "
+		}
+	}
+	if n.Parent != nil {
+		if rec, ok := n.Parent.Transcript.Get(n.ForkPoint); ok {
+			if s := rec.Summary(); s != "" {
+				fmt.Printf("%s    ↳ from: %s\n", childPrefix, truncate(s, 60))
+			}
+		}
+	}
+
+	for i, c := range n.Children {
+		printNode(c, childPrefix, i == len(n.Children)-1, false)
+	}
+}
+
 func cmdFork(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: ckpt fork <session>@<checkpoint> [-n N]")
@@ -203,6 +292,17 @@ func cmdFork(args []string) error {
 		n, err := t.Fork(checkpoint, newID, path, title)
 		if err != nil {
 			return err
+		}
+		// Parentage cannot be recovered from the transcript later, so record it
+		// now. A failure here only degrades `ckpt graph` to inference — the fork
+		// itself is already written, so warn rather than fail.
+		if err := lineage.Append(lineage.Record{
+			Session:   newID,
+			Parent:    t.SessionID,
+			ForkPoint: checkpoint,
+			Dir:       dir,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "ckpt: warning: could not record lineage: %v\n", err)
 		}
 		fmt.Printf("forked %s @%s -> %s (%d messages)\n", short(t.SessionID), short(checkpoint), newID, n)
 	}
