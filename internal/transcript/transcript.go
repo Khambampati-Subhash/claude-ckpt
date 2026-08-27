@@ -289,7 +289,10 @@ func (t *Transcript) Fork(uuid, newSessionID, path, title string) (int, error) {
 		return 0, err
 	}
 
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	// 0600 matches the permissions Claude Code gives its own transcripts. A
+	// fork carries the same conversation content as its parent, so it must not
+	// be world-readable.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return 0, err
 	}
