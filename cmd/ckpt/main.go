@@ -35,9 +35,9 @@ Session and checkpoint IDs may be abbreviated to any unique prefix.
 
 Examples:
   ckpt list
-  ckpt list 8bfb66f4
+  ckpt list 1a2b3c4d
   ckpt graph
-  ckpt fork 8bfb66f4@6e3f42cb -n 3
+  ckpt fork 1a2b3c4d@bb00cc11 -n 3
 `
 
 func main() {

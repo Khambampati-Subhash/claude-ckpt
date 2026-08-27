@@ -7,20 +7,20 @@ down a different path — without touching the original. Run several of those
 paths at once, keep the one that worked, throw the rest away.
 
 ```
-$ ckpt list 8bfb66f4
-session 8bfb66f4  Refactor the auth module
+$ ckpt list 1a2b3c4d
+session 1a2b3c4d  Refactor the auth module
 
-   b662c0c0  user      Refactor the auth module to use middleware
-   85efe69f  assistant I'll start by mapping the current request path...
-   41241541  user      Actually — should we use middleware or a decorator?
-   c9a704a3  assistant Middleware is the better fit here because...
+   aa11bb22  user      Refactor the auth module to use middleware
+   cc33dd44  assistant I'll start by mapping the current request path...
+   ee55ff66  user      Actually — should we use middleware or a decorator?
+   7788aa99  assistant Middleware is the better fit here because...
 
-Fork with:  ckpt fork 8bfb66f4@<checkpoint>
+Fork with:  ckpt fork 1a2b3c4d@<checkpoint>
 
-$ ckpt fork 8bfb66f4@41241541 -n 3
-forked 8bfb66f4 @41241541 -> 64eac53f-6971-4fbe-9fa1-53951eed1d58 (30 messages)
-forked 8bfb66f4 @41241541 -> a71b3e02-11cd-4a9e-8b77-2f0e5c9d4411 (30 messages)
-forked 8bfb66f4 @41241541 -> f0c8d914-6a25-4f31-9e02-7b1a3d6f8c55 (30 messages)
+$ ckpt fork 1a2b3c4d@ee55ff66 -n 3
+forked 1a2b3c4d @ee55ff66 -> 5e6f7a8b-1111-4111-8111-111111111111 (30 messages)
+forked 1a2b3c4d @ee55ff66 -> 9c1d2e3f-2222-4222-8222-222222222222 (30 messages)
+forked 1a2b3c4d @ee55ff66 -> 4b5a6978-3333-4333-8333-333333333333 (30 messages)
 ```
 
 Three sessions, same history behind them, free to diverge.
@@ -46,7 +46,7 @@ Claude Code already stores every session as a DAG. Look at any transcript in
 `~/.claude/projects/`:
 
 ```json
-{"type":"assistant","uuid":"85efe69f-…","parentUuid":"b662c0c0-…","message":{…}}
+{"type":"assistant","uuid":"cc33dd44-…","parentUuid":"aa11bb22-…","message":{…}}
 ```
 
 `uuid` and `parentUuid`. That is a commit graph — the same structure git uses.
@@ -125,8 +125,8 @@ ckpt list
 ```
 
 ```
-a1b2c3d4  Refactor the auth module                     142 messages
-e5f6a7b8  Fix segment compaction bug                    88 messages
+1a2b3c4d  Refactor the auth module                     142 messages
+2c3d4e5f  Fix segment compaction bug                    88 messages
 ```
 
 If you see `no Claude Code sessions found`, you are in a directory Claude Code
@@ -135,7 +135,7 @@ has never run in. That is the expected message, not a failure.
 ### 2. Find a checkpoint
 
 ```sh
-ckpt list a1b2c3d4
+ckpt list 1a2b3c4d
 ```
 
 Every line is a checkpoint you can fork from. A `├─` marks a message that
@@ -143,13 +143,13 @@ already has more than one child. Look for a **user** line where you made a
 decision worth revisiting:
 
 ```
-   41241541  user      Actually — should we use middleware or a decorator?
+   ee55ff66  user      Actually — should we use middleware or a decorator?
 ```
 
 ### 3. Fork it
 
 ```sh
-ckpt fork a1b2c3d4@41241541
+ckpt fork 1a2b3c4d@ee55ff66
 ```
 
 IDs abbreviate to any unique prefix, like git SHAs. Ambiguous prefixes are
@@ -187,12 +187,12 @@ The `git log --graph --all` view — every session in the project and where each
 one split off:
 
 ```
-● 8bfb66f4  Refactor the auth module                    386 msgs
-├── ● 570238e7  … [fork @bf2e4f2e]                       51 msgs   ⑂ bf2e4f2e  +0 new
+● 1a2b3c4d  Refactor the auth module                    386 msgs
+├── ● 5e6f7a8b  … [fork @ff44aa55]                       51 msgs   ⑂ ff44aa55  +0 new
 │       ↳ from: Should we use middleware or a decorator?
-├── ● 9ae99e52  … [fork @41241541]                       30 msgs   ⑂ 41241541  +12 new
+├── ● 9c1d2e3f  … [fork @ee55ff66]                       30 msgs   ⑂ ee55ff66  +12 new
 │       ↳ from: Can we cache the token instead?
-└── ● d2af8cda  … [fork @79574ea1]                       48 msgs   ⑂ 79574ea1  +3 new
+└── ● 4b5a6978  … [fork @dd22ee33]                       48 msgs   ⑂ dd22ee33  +3 new
 
 6 session(s), 4 fork(s)
 ```
@@ -221,7 +221,7 @@ same checkpoint will all edit the same files and overwrite each other, so give
 each one its own worktree:
 
 ```sh
-ckpt fork a1b2c3d4@41241541 -n 3        # note the three session IDs
+ckpt fork 1a2b3c4d@ee55ff66 -n 3        # note the three session IDs
 
 git worktree add ../try-a
 git worktree add ../try-b
@@ -301,7 +301,7 @@ So `ckpt fork` records the relationship when it happens, in
 `~/.ckpt/forks.jsonl`:
 
 ```json
-{"session":"9ae99e52-…","parent":"8bfb66f4-…","forkPoint":"41241541-…","dir":"/…","at":"…"}
+{"session":"9c1d2e3f-…","parent":"1a2b3c4d-…","forkPoint":"ee55ff66-…","dir":"/…","at":"…"}
 ```
 
 That file lives **outside** `~/.claude/`. Claude Code's transcript format is
