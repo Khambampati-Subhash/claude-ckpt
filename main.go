@@ -2,12 +2,17 @@
 //
 // Claude Code already stores each session as a DAG: every message carries a
 // uuid and a parentUuid, exactly like a commit graph. ckpt exposes that graph,
-// so any message can be treated as a checkpoint.
+// so any message can be treated as a checkpoint and forked into an independent
+// session that shares the parent's history but diverges from that point on.
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/khambampati-subhash/claude-ckpt/internal/store"
 	"github.com/khambampati-subhash/claude-ckpt/internal/transcript"
@@ -18,12 +23,15 @@ const usage = `ckpt — branch a Claude Code conversation
 Usage:
   ckpt list                       List sessions for the current directory
   ckpt list <session>             Show the checkpoint graph for a session
+  ckpt fork <session>@<checkpoint> [-n N]
+                                  Fork a session at a checkpoint
 
 Session and checkpoint IDs may be abbreviated to any unique prefix.
 
 Examples:
   ckpt list
   ckpt list 8bfb66f4
+  ckpt fork 8bfb66f4@6e3f42cb -n 3
 `
 
 func main() {
@@ -41,6 +49,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "list", "ls":
 		return cmdList(args[1:])
+	case "fork":
+		return cmdFork(args[1:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -125,6 +135,82 @@ func listCheckpoints(dir, id string) error {
 		}
 		fmt.Printf("%s %s  %-9s %s\n", marker, short(rec.UUID()), label, truncate(summary, 68))
 	}
+
+	fmt.Printf("\nFork with:  ckpt fork %s@<checkpoint>\n", short(t.SessionID))
+	return nil
+}
+
+func cmdFork(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: ckpt fork <session>@<checkpoint> [-n N]")
+	}
+	target := args[0]
+	count := 1
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "-n":
+			if i+1 >= len(args) {
+				return fmt.Errorf("-n needs a number")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 1 {
+				return fmt.Errorf("-n must be a positive number, got %q", args[i+1])
+			}
+			count = n
+			i++
+		default:
+			return fmt.Errorf("unknown flag %q", args[i])
+		}
+	}
+
+	sessionRef, checkpointRef, ok := strings.Cut(target, "@")
+	if !ok {
+		return fmt.Errorf("expected <session>@<checkpoint>, got %q", target)
+	}
+
+	dir, err := projectDir()
+	if err != nil {
+		return err
+	}
+	session, err := store.Find(dir, sessionRef)
+	if err != nil {
+		return err
+	}
+	t, err := transcript.Load(session.Path)
+	if err != nil {
+		return err
+	}
+	checkpoint, err := t.Resolve(checkpointRef)
+	if err != nil {
+		return err
+	}
+
+	parentTitle := t.Title()
+	if parentTitle == "" {
+		parentTitle = short(t.SessionID)
+	}
+
+	for i := 1; i <= count; i++ {
+		newID, err := uuidV4()
+		if err != nil {
+			return err
+		}
+		title := fmt.Sprintf("%s [fork @%s]", parentTitle, short(checkpoint))
+		if count > 1 {
+			title = fmt.Sprintf("%s [fork %d/%d @%s]", parentTitle, i, count, short(checkpoint))
+		}
+		path := filepath.Join(dir, newID+".jsonl")
+		n, err := t.Fork(checkpoint, newID, path, title)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("forked %s @%s -> %s (%d messages)\n", short(t.SessionID), short(checkpoint), newID, n)
+	}
+
+	fmt.Println("\nResume a fork with:  claude --resume <id>")
+	if count > 1 {
+		fmt.Println("Stagger parallel launches ~2s apart so the shared prefix is served from cache.")
+	}
 	return nil
 }
 
@@ -154,4 +240,16 @@ func truncate(s string, n int) string {
 		return s[:n]
 	}
 	return s[:n-3] + "..."
+}
+
+// uuidV4 generates a random UUID for a new session, matching the format Claude
+// Code uses for session filenames.
+func uuidV4() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
 }
