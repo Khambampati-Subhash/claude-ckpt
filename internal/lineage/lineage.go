@@ -26,6 +26,11 @@ type Record struct {
 	ForkPoint string `json:"forkPoint"` // message uuid it was forked at
 	Dir       string `json:"dir"`       // project directory, for disambiguation
 	At        string `json:"at"`        // RFC3339 timestamp
+
+	// Set when the fork was created by `ckpt run`, which pairs each fork with
+	// an isolated checkout. Empty for a plain `ckpt fork`.
+	Worktree string `json:"worktree,omitempty"`
+	Branch   string `json:"branch,omitempty"`
 }
 
 // Path returns the lineage file location.

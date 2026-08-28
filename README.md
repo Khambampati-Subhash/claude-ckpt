@@ -179,6 +179,9 @@ ckpt graph --html [path]           Write that graph as a standalone HTML page
 ckpt fork <session>@<checkpoint>   Fork a session at a checkpoint
 ckpt fork <session>@<checkpoint> -n 3
                                    Create three independent forks
+ckpt run <session>@<checkpoint> -n 3
+                                   Fork N ways, each in its own git worktree
+ckpt promote <session> [--cleanup] Merge a winning branch back
 ```
 
 ### `ckpt graph`
@@ -217,30 +220,48 @@ is gitignored for that reason.
 ## Running forks in parallel
 
 A conversation fork is only half the isolation. Three sessions resumed from the
-same checkpoint will all edit the same files and overwrite each other, so give
-each one its own worktree:
+same checkpoint will all edit the same files and overwrite each other, so each
+one needs its own worktree. `ckpt run` does both halves:
 
 ```sh
-ckpt fork 1a2b3c4d@ee55ff66 -n 3        # note the three session IDs
-
-git worktree add ../try-a
-git worktree add ../try-b
-git worktree add ../try-c
-
-(cd ../try-a && claude --resume <id-1>) &
-sleep 2
-(cd ../try-b && claude --resume <id-2>) &
-(cd ../try-c && claude --resume <id-3>) &
+ckpt run 1a2b3c4d@ee55ff66 -n 3
 ```
+
+```
+branch 1/3  5e6f7a8b  ../myrepo-ckpt-5e6f7a8b  (30 messages)
+branch 2/3  9c1d2e3f  ../myrepo-ckpt-9c1d2e3f  (30 messages)
+branch 3/3  4b5a6978  ../myrepo-ckpt-4b5a6978  (30 messages)
+
+Launch them — the sleep matters, see below:
+
+(cd ../myrepo-ckpt-5e6f7a8b && claude --resume 5e6f7a8b-…) &
+sleep 2
+(cd ../myrepo-ckpt-9c1d2e3f && claude --resume 9c1d2e3f-…) &
+(cd ../myrepo-ckpt-4b5a6978 && claude --resume 4b5a6978-…) &
+```
+
+Each branch gets a fork, a worktree, and a `ckpt/<id>` branch off your current
+HEAD. Paste the block to start them.
 
 **The `sleep 2` is not incidental.** A prompt cache entry only becomes readable
 once the first response starts streaming. Launch all three at once and every one
 of them misses the shared prefix, so you pay full input price three times. Start
 one, let it begin, then start the rest.
 
-When one wins, merge that worktree and `git worktree remove` the others. Merge
-the **code**, not the conversations — two divergent histories cannot be spliced
-into a coherent one.
+### Promoting the winner
+
+```sh
+ckpt promote 9c1d2e3f --cleanup
+```
+
+Merges that branch into your current branch, then removes the sibling worktrees
+and deletes their branches. Add `--force` if a losing branch has uncommitted
+changes you are willing to discard. Without `--cleanup` the siblings are left
+alone, so you can cherry-pick from them first.
+
+Merge the **code**, not the conversations — two divergent histories cannot be
+spliced into a coherent one. The losing conversation forks stay on disk; delete
+them from `~/.claude/projects/` if you want them gone.
 
 ### Where this works, and where it doesn't
 
@@ -338,6 +359,7 @@ internal/store        locating sessions on disk
 internal/lineage      recording which session a fork came from
 internal/forest       reconstructing the fork tree
 internal/htmlview     the standalone HTML view
+internal/worktree     git worktrees for parallel branches
 ```
 
 ---

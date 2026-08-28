@@ -19,6 +19,7 @@ import (
 	"github.com/khambampati-subhash/claude-ckpt/internal/lineage"
 	"github.com/khambampati-subhash/claude-ckpt/internal/store"
 	"github.com/khambampati-subhash/claude-ckpt/internal/transcript"
+	"github.com/khambampati-subhash/claude-ckpt/internal/worktree"
 )
 
 const usage = `ckpt — branch a Claude Code conversation
@@ -30,6 +31,10 @@ Usage:
   ckpt graph --html [path]        Write that graph as a standalone HTML page
   ckpt fork <session>@<checkpoint> [-n N]
                                   Fork a session at a checkpoint
+  ckpt run <session>@<checkpoint> [-n N] [--base DIR]
+                                  Fork N ways, each in its own git worktree
+  ckpt promote <session> [--cleanup] [--force]
+                                  Merge a winning branch back
 
 Session and checkpoint IDs may be abbreviated to any unique prefix.
 
@@ -38,6 +43,7 @@ Examples:
   ckpt list 1a2b3c4d
   ckpt graph
   ckpt fork 1a2b3c4d@bb00cc11 -n 3
+  ckpt run 1a2b3c4d@bb00cc11 -n 3
 `
 
 func main() {
@@ -59,6 +65,10 @@ func run(args []string) error {
 		return cmdGraph(args[1:])
 	case "fork":
 		return cmdFork(args[1:])
+	case "run":
+		return cmdRun(args[1:])
+	case "promote":
+		return cmdPromote(args[1:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -269,6 +279,227 @@ func printNode(n *forest.Node, prefix string, isLast, isRoot bool) {
 	for i, c := range n.Children {
 		printNode(c, childPrefix, i == len(n.Children)-1, false)
 	}
+}
+
+// cmdRun forks a checkpoint several ways and gives each fork an isolated
+// checkout, so the branches can run at the same time without overwriting each
+// other's files.
+func cmdRun(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: ckpt run <session>@<checkpoint> [-n N] [--base DIR]")
+	}
+	target := args[0]
+	count := 2 // running one branch in isolation is just `ckpt fork`
+	base := ""
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "-n":
+			if i+1 >= len(args) {
+				return fmt.Errorf("-n needs a number")
+			}
+			n, err := strconv.Atoi(args[i+1])
+			if err != nil || n < 1 {
+				return fmt.Errorf("-n must be a positive number, got %q", args[i+1])
+			}
+			count, i = n, i+1
+		case "--base":
+			if i+1 >= len(args) {
+				return fmt.Errorf("--base needs a directory")
+			}
+			base, i = args[i+1], i+1
+		default:
+			return fmt.Errorf("unknown flag %q", args[i])
+		}
+	}
+
+	sessionRef, checkpointRef, ok := strings.Cut(target, "@")
+	if !ok {
+		return fmt.Errorf("expected <session>@<checkpoint>, got %q", target)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	repo, err := worktree.Open(cwd)
+	if err != nil {
+		return fmt.Errorf("%w\n\nckpt run needs a git repository so each branch gets its own worktree.\nUse `ckpt fork` if you only want the conversation forks", err)
+	}
+	// Worktrees branch from HEAD, so uncommitted work is left behind. Better to
+	// say so now than to have someone discover it three branches later.
+	if clean, err := repo.IsClean(); err == nil && !clean {
+		fmt.Fprintln(os.Stderr, "ckpt: warning: uncommitted changes will not be carried into the worktrees")
+	}
+	if base == "" {
+		base = filepath.Dir(repo.Root)
+	}
+
+	dir, err := projectDir()
+	if err != nil {
+		return err
+	}
+	session, err := store.Find(dir, sessionRef)
+	if err != nil {
+		return err
+	}
+	t, err := transcript.Load(session.Path)
+	if err != nil {
+		return err
+	}
+	checkpoint, err := t.Resolve(checkpointRef)
+	if err != nil {
+		return err
+	}
+
+	parentTitle := t.Title()
+	if parentTitle == "" {
+		parentTitle = short(t.SessionID)
+	}
+	repoName := filepath.Base(repo.Root)
+
+	type branch struct {
+		session  string
+		worktree string
+	}
+	var created []branch
+
+	for i := 1; i <= count; i++ {
+		newID, err := uuidV4()
+		if err != nil {
+			return err
+		}
+		id := short(newID)
+		path := filepath.Join(base, fmt.Sprintf("%s-ckpt-%s", repoName, id))
+		branchName := "ckpt/" + id
+
+		title := fmt.Sprintf("%s [run %d/%d @%s]", parentTitle, i, count, short(checkpoint))
+		forkPath := filepath.Join(dir, newID+".jsonl")
+		n, err := t.Fork(checkpoint, newID, forkPath, title)
+		if err != nil {
+			return err
+		}
+		wt, err := repo.Add(path, branchName)
+		if err != nil {
+			// The conversation fork already exists; leaving it is harmless and
+			// keeps the failure recoverable by hand.
+			return fmt.Errorf("forked %s but could not create its worktree: %w", id, err)
+		}
+		if err := lineage.Append(lineage.Record{
+			Session:   newID,
+			Parent:    t.SessionID,
+			ForkPoint: checkpoint,
+			Dir:       dir,
+			Worktree:  wt.Path,
+			Branch:    wt.Branch,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "ckpt: warning: could not record lineage: %v\n", err)
+		}
+		fmt.Printf("branch %d/%d  %s  %s  (%d messages)\n", i, count, id, wt.Path, n)
+		created = append(created, branch{session: newID, worktree: wt.Path})
+	}
+
+	fmt.Printf("\nLaunch them — the sleep matters, see below:\n\n")
+	for i, b := range created {
+		if i == 1 {
+			fmt.Println("sleep 2")
+		}
+		fmt.Printf("(cd %s && claude --resume %s) &\n", b.worktree, b.session)
+	}
+	fmt.Printf("\nThe first branch warms the shared prefix into cache; the rest then read it\n")
+	fmt.Printf("at about a tenth the price. Launch all at once and every one pays full price.\n")
+	fmt.Printf("\nWhen one wins:  ckpt promote %s --cleanup\n", short(created[0].session))
+	return nil
+}
+
+// cmdPromote merges a winning branch back and optionally discards its siblings.
+func cmdPromote(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: ckpt promote <session> [--cleanup] [--force]")
+	}
+	ref := args[0]
+	cleanup, force := false, false
+	for _, a := range args[1:] {
+		switch a {
+		case "--cleanup":
+			cleanup = true
+		case "--force":
+			force = true
+		default:
+			return fmt.Errorf("unknown flag %q", a)
+		}
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	repo, err := worktree.Open(cwd)
+	if err != nil {
+		return err
+	}
+	dir, err := projectDir()
+	if err != nil {
+		return err
+	}
+
+	records := lineage.Parents(dir)
+	var winner lineage.Record
+	matches := 0
+	for id, rec := range records {
+		if rec.Worktree == "" {
+			continue // a plain fork, never given a checkout
+		}
+		if strings.HasPrefix(id, ref) {
+			winner, matches = rec, matches+1
+		}
+	}
+	switch matches {
+	case 0:
+		return fmt.Errorf("no run branch matching %q (only `ckpt run` branches can be promoted)", ref)
+	case 1:
+	default:
+		return fmt.Errorf("%q is ambiguous (%d matches)", ref, matches)
+	}
+
+	onto, err := repo.CurrentBranch()
+	if err != nil {
+		return err
+	}
+	msg := fmt.Sprintf("Merge ckpt branch %s\n\nPromoted from session %s, forked at %s.",
+		winner.Branch, short(winner.Session), short(winner.ForkPoint))
+	if err := repo.Merge(winner.Branch, msg); err != nil {
+		return err
+	}
+	fmt.Printf("merged %s into %s\n", winner.Branch, onto)
+
+	if !cleanup {
+		fmt.Println("\nSiblings left in place. Re-run with --cleanup to discard them.")
+		return nil
+	}
+
+	removed := 0
+	for id, rec := range records {
+		if rec.Worktree == "" || id == winner.Session {
+			continue
+		}
+		// Only siblings from the same run: same parent, same fork point.
+		if rec.Parent != winner.Parent || rec.ForkPoint != winner.ForkPoint {
+			continue
+		}
+		if !repo.Exists(rec.Worktree) {
+			continue
+		}
+		if err := repo.Remove(rec.Worktree, false, force); err != nil {
+			fmt.Fprintf(os.Stderr, "ckpt: could not remove %s: %v\n", rec.Worktree, err)
+			fmt.Fprintf(os.Stderr, "      it may have uncommitted changes; re-run with --force to discard them\n")
+			continue
+		}
+		fmt.Printf("removed %s (%s)\n", rec.Worktree, rec.Branch)
+		removed++
+	}
+	fmt.Printf("\n%d sibling worktree(s) removed. The winning worktree is kept.\n", removed)
+	fmt.Println("Their conversation forks are left on disk; delete them from ~/.claude/projects if you want them gone.")
+	return nil
 }
 
 func cmdFork(args []string) error {

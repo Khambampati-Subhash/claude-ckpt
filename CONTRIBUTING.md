@@ -71,6 +71,7 @@ internal/store        locating sessions on disk
 internal/lineage      recording which session a fork came from
 internal/forest       reconstructing the fork tree across sessions
 internal/htmlview     the standalone HTML view
+internal/worktree     git worktrees for parallel branches
 ```
 
 **All parsing of Claude Code's format is confined to `internal/transcript`.**
@@ -121,10 +122,9 @@ would be silent:
 
 ## Good first contributions
 
-- `ckpt run` — fork, create worktrees, and launch branches with the cache
-  stagger, in one command.
-- `ckpt promote <session>` — merge the winning worktree and clean up the rest.
 - `ckpt prune` — delete forks that were never resumed.
+- `ckpt run --tmux` — actually launch the branches in tmux panes rather than
+  printing the commands to paste.
 - Windows support: path handling and permissions both need work.
 - Subagent sidechains are carried along but not separately addressable.
 
