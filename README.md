@@ -182,7 +182,46 @@ ckpt fork <session>@<checkpoint> -n 3
 ckpt run <session>@<checkpoint> -n 3
                                    Fork N ways, each in its own git worktree
 ckpt promote <session> [--cleanup] Merge a winning branch back
+ckpt abandon <session> [--run]     Drop worktrees, keep the conversations
 ```
+
+### Which one do I want?
+
+The important split: **`fork` never touches git. `run` does.**
+
+| You want | Command | Creates worktrees? |
+|---|---|---|
+| Parallel **conversations** — comparing explanations, exploring ideas, nothing edits files | `ckpt fork -n 3` | No |
+| Parallel **work** — branches will edit code and would overwrite each other | `ckpt run -n 3` | Yes, one each |
+| Keep the winner's code | `ckpt promote <id> --cleanup` | Removes the losers |
+| Keep the conversations, drop the git side | `ckpt abandon <id> --run` | Removes all, keeps sessions |
+| Delete a run entirely | `ckpt abandon <id> --run --delete-sessions` | Removes everything |
+
+If you are not going to edit files, use `ckpt fork`. It works outside a git
+repository, creates nothing to clean up, and the forks are ordinary sessions you
+can resume forever.
+
+### What a worktree actually costs
+
+A worktree shares the repository's object database — its `.git` is a 102-byte
+file pointing back at the main one, not a copy. You pay for **one checkout of
+tracked files**, not for history:
+
+| repo | `.git` | one worktree | full clone |
+|---|---|---|---|
+| small Go tool | 560 K | **160 K** | 708 K |
+| mid-size project | 8.1 M | **988 K** | ~9 M |
+| large project | 66 M | **112 M** | ~178 M |
+
+For most repos this is free. For a large one, three branches is three checkouts —
+worth knowing before `-n 5`.
+
+**The real cost is usually not git.** A fresh worktree contains tracked files
+only, so anything untracked — `node_modules`, a virtualenv, `target/`,
+downloaded models — is missing and has to be reinstalled per branch. That is
+normally far more expensive than the checkout. If your project needs a heavy
+setup step per directory, prefer `ckpt fork` unless the branches genuinely need
+to build.
 
 ### `ckpt graph`
 
@@ -260,8 +299,43 @@ changes you are willing to discard. Without `--cleanup` the siblings are left
 alone, so you can cherry-pick from them first.
 
 Merge the **code**, not the conversations — two divergent histories cannot be
-spliced into a coherent one. The losing conversation forks stay on disk; delete
-them from `~/.claude/projects/` if you want them gone.
+spliced into a coherent one.
+
+### If none of them won
+
+You do not have to promote anything. `ckpt abandon` drops the git side and
+leaves the conversations alone:
+
+```sh
+ckpt abandon 9c1d2e3f --run
+```
+
+```
+abandoned 9c1d2e3f
+  removed worktree  ../myrepo-ckpt-9c1d2e3f
+  deleted branch    ckpt/9c1d2e3f
+  kept conversation 9c1d2e3f — resume it any time:
+      claude --resume 9c1d2e3f-2222-4222-8222-222222222222
+```
+
+Those forks are now **ordinary sessions**. They behave exactly like anything
+made with `ckpt fork`, still appear in `ckpt list` and `ckpt graph`, and can be
+resumed forever. Nothing about having once had a worktree makes them temporary.
+
+`abandon` refuses to delete a branch holding commits that exist nowhere else,
+and shows you what they are:
+
+```
+ckpt/83871370 has 1 commit(s) not in main:
+    4a67937 unmerged work
+ckpt: refusing to discard unmerged work
+
+Keep it:      ckpt promote <session>      (merge it first)
+Discard it:   ckpt abandon <session> --force
+```
+
+Add `--delete-sessions` if you want the conversations gone too — otherwise they
+stay. Deleting them is never the default.
 
 ### Where this works, and where it doesn't
 

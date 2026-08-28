@@ -35,6 +35,8 @@ Usage:
                                   Fork N ways, each in its own git worktree
   ckpt promote <session> [--cleanup] [--force]
                                   Merge a winning branch back
+  ckpt abandon <session> [--run] [--delete-sessions] [--force]
+                                  Drop a branch's worktree, keep the conversation
 
 Session and checkpoint IDs may be abbreviated to any unique prefix.
 
@@ -69,6 +71,8 @@ func run(args []string) error {
 		return cmdRun(args[1:])
 	case "promote":
 		return cmdPromote(args[1:])
+	case "abandon":
+		return cmdAbandon(args[1:])
 	case "help", "-h", "--help":
 		fmt.Print(usage)
 		return nil
@@ -407,7 +411,138 @@ func cmdRun(args []string) error {
 	}
 	fmt.Printf("\nThe first branch warms the shared prefix into cache; the rest then read it\n")
 	fmt.Printf("at about a tenth the price. Launch all at once and every one pays full price.\n")
-	fmt.Printf("\nWhen one wins:  ckpt promote %s --cleanup\n", short(created[0].session))
+	fmt.Printf("\nWhen one wins:   ckpt promote %s --cleanup\n", short(created[0].session))
+	fmt.Printf("If none do:      ckpt abandon %s --run\n", short(created[0].session))
+	fmt.Printf("                 (drops the worktrees; the conversations stay usable)\n")
+	return nil
+}
+
+// cmdAbandon drops the git side of a run — worktree and branch — while leaving
+// the conversation forks alone, so they carry on as ordinary sessions.
+func cmdAbandon(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: ckpt abandon <session> [--run] [--delete-sessions] [--force]")
+	}
+	ref := args[0]
+	wholeRun, deleteSessions, force := false, false, false
+	for _, a := range args[1:] {
+		switch a {
+		case "--run":
+			wholeRun = true
+		case "--delete-sessions":
+			deleteSessions = true
+		case "--force":
+			force = true
+		default:
+			return fmt.Errorf("unknown flag %q", a)
+		}
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	repo, err := worktree.Open(cwd)
+	if err != nil {
+		return err
+	}
+	dir, err := projectDir()
+	if err != nil {
+		return err
+	}
+
+	records := lineage.Parents(dir)
+	var target lineage.Record
+	matches := 0
+	for id, rec := range records {
+		if rec.Worktree == "" {
+			continue
+		}
+		if strings.HasPrefix(id, ref) {
+			target, matches = rec, matches+1
+		}
+	}
+	switch matches {
+	case 0:
+		return fmt.Errorf("no run branch matching %q\n\nOnly `ckpt run` branches have worktrees. Plain `ckpt fork` sessions\nhave nothing to abandon — they are already ordinary conversations", ref)
+	case 1:
+	default:
+		return fmt.Errorf("%q is ambiguous (%d matches)", ref, matches)
+	}
+
+	// Collect what to drop: just this branch, or every branch from the same run.
+	victims := []lineage.Record{target}
+	if wholeRun {
+		victims = nil
+		for _, rec := range records {
+			if rec.Worktree != "" && rec.Parent == target.Parent && rec.ForkPoint == target.ForkPoint {
+				victims = append(victims, rec)
+			}
+		}
+	}
+
+	onto, err := repo.CurrentBranch()
+	if err != nil {
+		return err
+	}
+
+	// Refuse to silently destroy commits that exist nowhere else.
+	if !force {
+		blocked := false
+		for _, v := range victims {
+			commits, err := repo.UnmergedCommits(v.Branch, onto)
+			if err != nil || len(commits) == 0 {
+				continue
+			}
+			blocked = true
+			fmt.Fprintf(os.Stderr, "%s has %d commit(s) not in %s:\n", v.Branch, len(commits), onto)
+			for _, c := range commits {
+				fmt.Fprintf(os.Stderr, "    %s\n", c)
+			}
+		}
+		if blocked {
+			return fmt.Errorf("refusing to discard unmerged work\n\n" +
+				"Keep it:      ckpt promote <session>      (merge it first)\n" +
+				"Discard it:   ckpt abandon <session> --force")
+		}
+	}
+
+	dropped := 0
+	for _, v := range victims {
+		if !repo.Exists(v.Worktree) {
+			continue
+		}
+		if err := repo.Remove(v.Worktree, false, force); err != nil {
+			fmt.Fprintf(os.Stderr, "ckpt: could not remove %s: %v\n", v.Worktree, err)
+			fmt.Fprintln(os.Stderr, "      re-run with --force to discard uncommitted changes")
+			continue
+		}
+		fmt.Printf("abandoned %s\n", short(v.Session))
+		fmt.Printf("  removed worktree  %s\n", v.Worktree)
+		fmt.Printf("  deleted branch    %s\n", v.Branch)
+
+		if deleteSessions {
+			path := filepath.Join(dir, v.Session+".jsonl")
+			if err := os.Remove(path); err != nil {
+				fmt.Fprintf(os.Stderr, "  could not delete conversation: %v\n", err)
+			} else {
+				fmt.Printf("  deleted conversation %s\n", short(v.Session))
+			}
+		} else {
+			fmt.Printf("  kept conversation %s — resume it any time:\n", short(v.Session))
+			fmt.Printf("      claude --resume %s\n", v.Session)
+		}
+		dropped++
+	}
+
+	if dropped == 0 {
+		return fmt.Errorf("nothing to abandon (worktrees already gone?)")
+	}
+	if !deleteSessions {
+		fmt.Printf("\n%d branch(es) abandoned. Their conversations are now ordinary sessions —\n", dropped)
+		fmt.Println("they behave exactly like anything made with `ckpt fork`, and `ckpt graph`")
+		fmt.Println("still shows where they came from.")
+	}
 	return nil
 }
 

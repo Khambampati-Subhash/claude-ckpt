@@ -254,6 +254,50 @@ func TestMergeBringsBranchWorkIntoMain(t *testing.T) {
 	}
 }
 
+// Abandoning a branch deletes it outright, so the caller has to be able to see
+// what would be destroyed before doing it.
+func TestUnmergedCommits(t *testing.T) {
+	dir := newRepo(t)
+	r := open(t, dir)
+
+	path := filepath.Join(filepath.Dir(dir), "wt-work")
+	wt, err := r.Add(path, "ckpt/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := r.UnmergedCommits("ckpt/work", "main"); err != nil || len(got) != 0 {
+		t.Errorf("a fresh branch should have no unmerged commits, got %v (%v)", got, err)
+	}
+
+	if err := os.WriteFile(filepath.Join(wt.Path, "app.txt"), []byte("one\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt.Path, "add", "-A")
+	git(t, wt.Path, "commit", "-qm", "first change")
+	if err := os.WriteFile(filepath.Join(wt.Path, "app.txt"), []byte("two\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git(t, wt.Path, "add", "-A")
+	git(t, wt.Path, "commit", "-qm", "second change")
+
+	got, err := r.UnmergedCommits("ckpt/work", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("unmerged commits = %d, want 2: %v", len(got), got)
+	}
+
+	// Once merged there is nothing left to lose, so the branch is safe to drop.
+	if err := r.Merge("ckpt/work", "merge it"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.UnmergedCommits("ckpt/work", "main"); err != nil || len(got) != 0 {
+		t.Errorf("after merging, unmerged commits = %v, want none", got)
+	}
+}
+
 func TestMergeUnknownBranch(t *testing.T) {
 	r := open(t, newRepo(t))
 	if err := r.Merge("ckpt/does-not-exist", "msg"); err == nil {

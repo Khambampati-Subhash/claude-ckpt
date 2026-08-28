@@ -101,6 +101,25 @@ func (r *Repo) Remove(path string, keepBranch bool, force bool) error {
 	return nil
 }
 
+// UnmergedCommits lists commits on branch that are not reachable from onto.
+//
+// Deleting such a branch destroys work that exists nowhere else, so callers
+// should show these and require an explicit override rather than discarding
+// them quietly.
+func (r *Repo) UnmergedCommits(branch, onto string) ([]string, error) {
+	out, err := run(r.Root, "log", "--oneline", "--no-decorate", onto+".."+branch)
+	if err != nil {
+		return nil, err
+	}
+	var commits []string
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		if line != "" {
+			commits = append(commits, line)
+		}
+	}
+	return commits, nil
+}
+
 // Merge brings branch into the main tree's current branch.
 func (r *Repo) Merge(branch, message string) error {
 	args := []string{"merge", "--no-ff", branch}

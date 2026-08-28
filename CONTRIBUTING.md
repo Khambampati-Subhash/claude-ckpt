@@ -123,6 +123,8 @@ would be silent:
 ## Good first contributions
 
 - `ckpt prune` — delete forks that were never resumed.
+- `ckpt run --no-worktree` — currently `ckpt fork` covers this, but a shared
+  flag may read better than two commands.
 - `ckpt run --tmux` — actually launch the branches in tmux panes rather than
   printing the commands to paste.
 - Windows support: path handling and permissions both need work.
